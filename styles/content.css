@@ -1,2 +1,86 @@
-/* ReadItForThePlot - Styles */
-/* Empty for now */
+/* ReadItForThePlot - Button Styles */
+
+.rifpt-translate-btn {
+    /* Size and shape */
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    
+    /* Colors */
+    background: rgba(59, 130, 246, 0.95);
+    border: 2px solid white;
+    color: white;
+    
+    /* Layout */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    
+    /* Effects */
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    transition: all 0.2s ease;
+  }
+  
+  .rifpt-translate-btn:hover {
+    background: rgba(59, 130, 246, 1);
+    transform: scale(1.1);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  }
+  
+  .rifpt-translate-btn:active {
+    transform: scale(0.95);
+  }
+  
+  .rifpt-translate-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.8;
+  }
+  
+  .rifpt-translate-btn svg {
+    width: 16px;
+    height: 16px;
+  }
+  
+  /* Loading State */
+  .rifpt-translate-btn.rifpt-loading {
+    background: rgba(251, 191, 36, 0.95);
+  }
+  
+  .rifpt-translate-btn.rifpt-loading:hover {
+    background: rgba(251, 191, 36, 1);
+    transform: scale(1);
+  }
+  
+  .rifpt-translate-btn.rifpt-loading .rifpt-spinner {
+    animation: spin 1s linear infinite;
+  }
+  
+  @keyframes spin {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  
+  /* Success State */
+  .rifpt-translate-btn.rifpt-success {
+    background: rgba(34, 197, 94, 0.95);
+  }
+  
+  .rifpt-translate-btn.rifpt-success:hover {
+    background: rgba(34, 197, 94, 1);
+  }
+  
+  /* Error State */
+  .rifpt-translate-btn.rifpt-error {
+    background: rgba(239, 68, 68, 0.95);
+  }
+  
+  .rifpt-translate-btn.rifpt-error:hover {
+    background: rgba(239, 68, 68, 1);
+    transform: scale(1);
+  }
