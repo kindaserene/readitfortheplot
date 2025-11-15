@@ -3,6 +3,9 @@ console.log('ReadItForThePlot: Extension loaded!');
 
 const MIN_IMAGE_SIZE = 50; // Minimum width/height in pixels
 
+// Track translated images
+const translatedImages = new Map(); // imageId => { canvas, translationData, isShowing }
+
 // SVG Icons from Lucide
 const ICONS = {
   pawPrint: `
@@ -24,6 +27,14 @@ const ICONS = {
       <circle cx="12" cy="12" r="3"/>
     </svg>
   `,
+  eyeOff: `
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/>
+      <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/>
+      <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/>
+      <line x1="2" x2="22" y1="2" y2="22"/>
+    </svg>
+  `,
   error: `
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <circle cx="12" cy="12" r="10"/>
@@ -38,77 +49,210 @@ const ICONS = {
  */
 function isImageLargeEnough(img) {
   const rect = img.getBoundingClientRect();
-  const width = rect.width;
-  const height = rect.height;
-  return width >= MIN_IMAGE_SIZE && height >= MIN_IMAGE_SIZE;
+  return rect.width >= MIN_IMAGE_SIZE && rect.height >= MIN_IMAGE_SIZE;
 }
 
 /**
- * Create translate button with paw print icon
+ * Convert image to base64 data URL
  */
-function createTranslateButton(img) {
-  // Check if button already exists for this image
-  if (img.dataset.rifptButton) {
-    return null;
-  }
+function imageToDataURL(img) {
+  return new Promise((resolve, reject) => {
+    try {
+      // If already a data URL, return it
+      if (img.src.startsWith('data:')) {
+        resolve(img.src);
+        return;
+      }
 
-  const button = document.createElement('button');
-  button.className = 'rifpt-translate-btn';
-  button.innerHTML = ICONS.pawPrint;
-  button.title = 'Translate image text';
-  
-  // Store reference to the image
-  button.dataset.imageId = img.dataset.rifptButton = Date.now() + Math.random();
-  
-  // Position button
-  button.style.position = 'absolute';
-  button.style.zIndex = '10000';
-  
-  // Click handler
-  button.addEventListener('click', async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    await handleTranslateClick(img, button);
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+
+      canvas.width = img.naturalWidth || img.width;
+      canvas.height = img.naturalHeight || img.height;
+
+      ctx.drawImage(img, 0, 0);
+      const dataUrl = canvas.toDataURL('image/png');
+      resolve(dataUrl);
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+/**
+ * Create canvas overlay for translated text
+ */
+function createCanvasOverlay(img, translationData) {
+  const rect = img.getBoundingClientRect();
+
+  // Create canvas element
+  const canvas = document.createElement('canvas');
+  canvas.className = 'rifpt-canvas-overlay';
+  canvas.width = rect.width;
+  canvas.height = rect.height;
+
+  // Position canvas over image
+  canvas.style.position = 'absolute';
+  canvas.style.top = `${rect.top + window.scrollY}px`;
+  canvas.style.left = `${rect.left + window.scrollX}px`;
+  canvas.style.width = `${rect.width}px`;
+  canvas.style.height = `${rect.height}px`;
+  canvas.style.zIndex = '9999';
+  canvas.style.pointerEvents = 'none'; // Allow clicks to pass through
+
+  // Draw translated text
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Draw each translated text at its bounding box location
+  translationData.texts.forEach(({ text, bbox }) => {
+    if (!text || !bbox) return;
+
+    const [x, y, width, height] = bbox;
+
+    // Calculate font size based on bbox height
+    const fontSize = Math.max(12, height * 0.7);
+    ctx.font = `${fontSize}px Arial, sans-serif`;
+    ctx.fillStyle = 'white';
+    ctx.strokeStyle = 'black';
+    ctx.lineWidth = 3;
+    ctx.textBaseline = 'top';
+
+    // Word wrap text to fit in bbox width
+    const words = text.split(' ');
+    const lines = [];
+    let currentLine = '';
+
+    words.forEach(word => {
+      const testLine = currentLine ? `${currentLine} ${word}` : word;
+      const metrics = ctx.measureText(testLine);
+
+      if (metrics.width > width && currentLine) {
+        lines.push(currentLine);
+        currentLine = word;
+      } else {
+        currentLine = testLine;
+      }
+    });
+    if (currentLine) {
+      lines.push(currentLine);
+    }
+
+    // Draw each line
+    const lineHeight = fontSize * 1.2;
+    lines.forEach((line, i) => {
+      const yPos = y + (i * lineHeight);
+
+      // Draw text stroke (outline)
+      ctx.strokeText(line, x, yPos);
+      // Draw text fill
+      ctx.fillText(line, x, yPos);
+    });
   });
 
-  return button;
+  return canvas;
+}
+
+/**
+ * Update canvas position (for scroll/resize)
+ */
+function updateCanvasPosition(img, canvas) {
+  const rect = img.getBoundingClientRect();
+  canvas.style.top = `${rect.top + window.scrollY}px`;
+  canvas.style.left = `${rect.left + window.scrollX}px`;
+  canvas.style.width = `${rect.width}px`;
+  canvas.style.height = `${rect.height}px`;
 }
 
 /**
  * Handle translate button click
  */
 async function handleTranslateClick(img, button) {
+  const imageId = img.dataset.rifptButton;
+
   console.log('🐾 Translate button clicked!', img.src);
-  
+
+  // Check if translation already exists (toggle mode)
+  if (translatedImages.has(imageId)) {
+    toggleTranslation(img, button, imageId);
+    return;
+  }
+
   // Change to loading state
   setButtonState(button, 'loading');
-  
-  // Simulate translation process (will be real API call later)
+
   try {
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    // Simulate success
-    console.log('✅ Translation complete!');
-    setButtonState(button, 'success');
-    
+    // Convert image to base64
+    const imageDataUrl = await imageToDataURL(img);
+
+    // Send to background script for translation
+    const response = await chrome.runtime.sendMessage({
+      type: 'TRANSLATE_IMAGE',
+      imageUrl: img.src,
+      imageDataUrl: imageDataUrl
+    });
+
+    if (!response.success) {
+      throw new Error(response.error || 'Translation failed');
+    }
+
+    console.log('✅ Translation complete!', response);
+
+    // Create canvas overlay
+    const canvas = createCanvasOverlay(img, response);
+    document.body.appendChild(canvas);
+
+    // Store translation data
+    translatedImages.set(imageId, {
+      canvas,
+      translationData: response,
+      isShowing: true
+    });
+
+    // Update button to show success (eye icon)
+    setButtonState(button, 'translated');
+
   } catch (error) {
     console.error('❌ Translation failed:', error);
     setButtonState(button, 'error');
-    
-    // Reset to default after 2 seconds
+
+    // Show error message
+    showErrorMessage(error.message);
+
+    // Reset to default after 3 seconds
     setTimeout(() => {
       setButtonState(button, 'default');
-    }, 2000);
+    }, 3000);
   }
 }
 
 /**
- * Set button state (default, loading, success, error)
+ * Toggle between translated and original view
+ */
+function toggleTranslation(img, button, imageId) {
+  const data = translatedImages.get(imageId);
+
+  if (!data) return;
+
+  if (data.isShowing) {
+    // Hide translation (show original)
+    data.canvas.style.display = 'none';
+    data.isShowing = false;
+    setButtonState(button, 'hidden');
+  } else {
+    // Show translation
+    data.canvas.style.display = 'block';
+    data.isShowing = true;
+    setButtonState(button, 'translated');
+  }
+}
+
+/**
+ * Set button state
  */
 function setButtonState(button, state) {
-  button.className = 'rifpt-translate-btn'; // Reset classes
-  
+  button.className = 'rifpt-translate-btn';
+
   switch(state) {
     case 'loading':
       button.innerHTML = ICONS.loaderCircle;
@@ -116,21 +260,28 @@ function setButtonState(button, state) {
       button.disabled = true;
       button.title = 'Translating...';
       break;
-      
-    case 'success':
+
+    case 'translated':
       button.innerHTML = ICONS.eye;
       button.classList.add('rifpt-success');
       button.disabled = false;
-      button.title = 'Show original';
+      button.title = 'Hide translation';
       break;
-      
+
+    case 'hidden':
+      button.innerHTML = ICONS.eyeOff;
+      button.classList.add('rifpt-hidden');
+      button.disabled = false;
+      button.title = 'Show translation';
+      break;
+
     case 'error':
       button.innerHTML = ICONS.error;
       button.classList.add('rifpt-error');
       button.disabled = true;
       button.title = 'Translation failed';
       break;
-      
+
     case 'default':
     default:
       button.innerHTML = ICONS.pawPrint;
@@ -141,16 +292,72 @@ function setButtonState(button, state) {
 }
 
 /**
- * Position button next to image (left side, top aligned)
+ * Show error message to user
+ */
+function showErrorMessage(message) {
+  // Create error toast
+  const toast = document.createElement('div');
+  toast.className = 'rifpt-error-toast';
+  toast.textContent = message;
+
+  // Style toast
+  toast.style.position = 'fixed';
+  toast.style.top = '20px';
+  toast.style.right = '20px';
+  toast.style.background = 'rgba(239, 68, 68, 0.95)';
+  toast.style.color = 'white';
+  toast.style.padding = '12px 20px';
+  toast.style.borderRadius = '8px';
+  toast.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.3)';
+  toast.style.zIndex = '99999';
+  toast.style.maxWidth = '300px';
+  toast.style.fontSize = '14px';
+
+  document.body.appendChild(toast);
+
+  // Remove after 5 seconds
+  setTimeout(() => {
+    toast.remove();
+  }, 5000);
+}
+
+/**
+ * Create translate button
+ */
+function createTranslateButton(img) {
+  if (img.dataset.rifptButton) {
+    return null;
+  }
+
+  const button = document.createElement('button');
+  button.className = 'rifpt-translate-btn';
+  button.innerHTML = ICONS.pawPrint;
+  button.title = 'Translate image text';
+
+  const imageId = Date.now() + Math.random();
+  button.dataset.imageId = imageId;
+  img.dataset.rifptButton = imageId;
+
+  button.style.position = 'absolute';
+  button.style.zIndex = '10000';
+
+  button.addEventListener('click', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    await handleTranslateClick(img, button);
+  });
+
+  return button;
+}
+
+/**
+ * Position button next to image
  */
 function positionButton(img, button) {
   const rect = img.getBoundingClientRect();
-  
-  // Button size
-  const buttonSize = 32; // Button is 32x32px
-  const offset = -5; // Space between button and image
-  
-  // Position: left side, aligned with top of image
+  const buttonSize = 32;
+  const offset = -5;
+
   button.style.top = `${rect.top + window.scrollY}px`;
   button.style.left = `${rect.left + window.scrollX - buttonSize - offset}px`;
 }
@@ -160,76 +367,97 @@ function positionButton(img, button) {
  */
 function processImages() {
   console.log('ReadItForThePlot: Processing images...');
-  
+
   const allImages = document.querySelectorAll('img');
   const largeImages = Array.from(allImages).filter(isImageLargeEnough);
-  
+
   console.log(`Found ${largeImages.length} images to process`);
-  
-  largeImages.forEach((img, index) => {
-    // Skip if already processed
+
+  largeImages.forEach((img) => {
     if (img.dataset.rifptButton) {
       return;
     }
 
-    // Create button
     const button = createTranslateButton(img);
     if (button) {
-      // Add button to page
       document.body.appendChild(button);
-      
-      // Position it
       positionButton(img, button);
-      
-      console.log(`✅ Added button to image ${index + 1}`);
     }
   });
 }
 
 /**
- * Update button positions on scroll/resize
+ * Update button and canvas positions
  */
-function updateButtonPositions() {
+function updatePositions() {
   const buttons = document.querySelectorAll('.rifpt-translate-btn');
   const images = document.querySelectorAll('img[data-rifpt-button]');
-  
+
   images.forEach((img) => {
+    const imageId = img.dataset.rifptButton;
+
+    // Update button position
     const button = Array.from(buttons).find(
-      btn => btn.dataset.imageId === img.dataset.rifptButton
+      btn => btn.dataset.imageId === imageId
     );
     if (button) {
       positionButton(img, button);
     }
+
+    // Update canvas position
+    const data = translatedImages.get(imageId);
+    if (data && data.canvas) {
+      updateCanvasPosition(img, data.canvas);
+    }
   });
 }
+
+/**
+ * Listen for messages from popup
+ */
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'SETTINGS_UPDATED') {
+    console.log('Settings updated:', message.settings);
+
+    // Reload buttons if showButtons setting changed
+    if (!message.settings.showButtons) {
+      document.querySelectorAll('.rifpt-translate-btn').forEach(btn => btn.remove());
+    } else {
+      processImages();
+    }
+  }
+});
 
 /**
  * Initialize extension
  */
 function init() {
   console.log('ReadItForThePlot: Initializing...');
-  
-  // Process images when page loads
+
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', processImages);
   } else {
     processImages();
   }
-  
-  // Watch for new images (dynamic content)
+
+  // Watch for new images
   const observer = new MutationObserver(() => {
     processImages();
   });
-  
+
   observer.observe(document.body, {
     childList: true,
     subtree: true
   });
-  
+
   // Update positions on scroll and resize
-  window.addEventListener('scroll', updateButtonPositions);
-  window.addEventListener('resize', updateButtonPositions);
-  
+  let resizeTimeout;
+  window.addEventListener('scroll', updatePositions);
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimeout);
+    resizeTimeout = setTimeout(updatePositions, 100);
+  });
+
   console.log('ReadItForThePlot: Initialized! 🐾');
 }
 

@@ -75,11 +75,20 @@
     background: rgba(34, 197, 94, 1);
   }
   
+  /* Hidden State (translation exists but hidden) */
+  .rifpt-translate-btn.rifpt-hidden {
+    background: rgba(156, 163, 175, 0.95);
+  }
+
+  .rifpt-translate-btn.rifpt-hidden:hover {
+    background: rgba(156, 163, 175, 1);
+  }
+
   /* Error State */
   .rifpt-translate-btn.rifpt-error {
     background: rgba(239, 68, 68, 0.95);
   }
-  
+
   .rifpt-translate-btn.rifpt-error:hover {
     background: rgba(239, 68, 68, 1);
     transform: scale(1);
